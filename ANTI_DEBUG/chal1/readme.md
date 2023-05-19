@@ -1,0 +1,1 @@
+writeup link: https://inseclab.uit.edu.vn/writeup-re-kaf-ctf-2020-sse_keygenme-x-htb-uni-2020-my_name_is-patch_of_the_ninjabootcamp-ctf-wannagame-winter-season-ep-2-3/
