@@ -1,1 +1,0 @@
-writeup link: https://ctf-wiki.mahaloz.re/reverse/windows/anti-debug/example/
