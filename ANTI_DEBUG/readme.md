@@ -327,7 +327,130 @@ key = b'\xb8\x86Dc\xb5\xd8\x1c\x95\xd1~p^\xbcVc4(\x90\x15\xf8MR\x9d\x1e\xf5\x1f\
 enc = b'\xdb\xb6*\x04\xc7\xb9h\xe0\xbd>\x04o\xd38\x10kJ\xe5a\xa7$\r\xfcs\xaaq\xf8\x10\r}UnC'
 print(xor(key, enc))
 ```
-![]()
+![](https://github.com/sinkthemall/REVERSE_ENGINEERING_challenges/blob/main/img/fake_flag_chall3.png)
+Hừm what!? Nếu nó không phải real flag thì làm sao để tìm được đây? Thật sự thì đến khúc này mình không có bất kì ý tưởng nào để mà làm cả( 1 phần vì file bị stripped nên rất khó để biết được những hàm trong file và nó được sử dụng để làm gì). Thì ở đây mình quyết định tìm hiểu thêm về 1 số thứ và sau khi tìm hiểu thì mình đã phát hiện được ra kiến thức mới: .init_array và .fini_array! Vậy thì hai cái này có liên quan gì tới challenge mà ta đang làm?
+Đầu tiên, đây là định nghĩa về .init_array và .fini_array:
+```
+The .init_array and .fini_array are sections in the binary executable file format, specifically used in the ELF (Executable and Linkable Format) commonly used in Linux and Unix-like systems.
+
+.init_array:
+The .init_array section contains an array of function pointers that are executed before the program's main function is called. These functions are commonly referred to as "constructor" functions because they perform initialization tasks before the program starts executing its main logic. The purpose of the .init_array section is to provide a convenient way to execute such initialization functions automatically.
+When the program starts, the runtime environment (such as the C runtime) looks for the .init_array section and iterates through the function pointers, calling each function in the order they appear in the array. This allows developers to ensure that certain initialization tasks, such as setting up global variables or configuring libraries, are performed before the main program execution begins.
+
+.fini_array:
+Similarly, the .fini_array section contains an array of function pointers that are executed when the program is about to exit, just before the exit function is called. These functions are often called "destructor" functions because they handle cleanup tasks or perform finalization operations before the program terminates.
+```
+Dựa trên định nghĩa trên, thì ta biết rằng .init_array và .fini_array chứa 1 chuỗi các function pointer, và chúng hoạt động giống như constructor và destructor vậy: .init_array sẽ chạy các function pointer khi chương trình bắt đầu (tức là từ trước lúc hàm main), ngược lại .fini_array sẽ chạy các pointer chứa bên trong khi chương trình kết thúc bình thường.
+Vậy câu hỏi đặt ra: nếu giả sử 1 hàm được lưu trữ trong .init_array (hoặc .fini_array), thì liệu nhất thiết có cần phải xuất hiện trong main flow thì mới chạy được không? Câu trả lời là không: nếu như chúng xuất hiện trong .init_array và .fini_array thì khi chạy chương trình( hoặc khi kết thúc), những chương trình ấy cũng sẽ tự động chạy mà không nhất thiết phải được gọi trong main flow. Đây có thể là lí do cho việc chúng ta không tim ra bất cứ thông tin nào liên quan đến real flag.
+
+Thì sau một hồi tìm hiểu mò mẫm thì mình phát hiện ra 1 hàm xuất hiện trong .fini_array
+```c
+unsigned __int64 what2()
+{
+  int v1; // eax
+  __WAIT_STATUS stat_loc; // [rsp+4h] [rbp-2Ch] BYREF
+  int i; // [rsp+Ch] [rbp-24h]
+  int j; // [rsp+10h] [rbp-20h]
+  int k; // [rsp+14h] [rbp-1Ch]
+  __pid_t v6; // [rsp+18h] [rbp-18h]
+  int v7; // [rsp+1Ch] [rbp-14h]
+  int pipedes[2]; // [rsp+20h] [rbp-10h] BYREF
+  unsigned __int64 v9; // [rsp+28h] [rbp-8h]
+
+  v9 = __readfsqword(0x28u);
+  if ( pipe(pipedes) == -1 )
+    exit(1);
+  v6 = fork();
+  if ( v6 < 0 )
+    exit(1);
+  if ( v6 )
+  {
+    close(pipedes[0]);
+    v7 = 2;
+    HIDWORD(stat_loc.__iptr) = 3;
+    while ( SHIDWORD(stat_loc.__iptr) < len_str )
+    {
+      if ( SHIDWORD(stat_loc.__iptr) % v7 )
+        write(pipedes[1], (char *)&stat_loc.__iptr + 4, 4uLL);
+      else
+        ++dword_5563B13C9168;
+      ++HIDWORD(stat_loc.__iptr);
+    }
+    close(pipedes[1]);
+    close(dword_5563B13C93AC);
+    while ( (unsigned int)read(::pipedes[0], (char *)&stat_loc.__iptr + 4, 4uLL) )
+    {
+      v1 = dword_5563B13C9164++;
+      byte_5563B13C9100[v1] = BYTE4(stat_loc.__iptr);
+    }
+    close(::pipedes[0]);
+    wait((__WAIT_STATUS)&stat_loc);
+    if ( LODWORD(stat_loc.__uptr) )
+    {
+      puts(s);
+      exit(1);
+    }
+    v6 = fork();
+    if ( v6 < 0 )
+      exit(1);
+    if ( !v6 )
+    {
+      key_scheduling((__int64)byte_5563B13C9240, (__int64)byte_5563B13C9100, dword_5563B13C9164);
+      for ( i = 0; i < dword_5563B13C9168; ++i )
+        rc4_producing_stream((__int64)byte_5563B13C9240, len_str, (__int64)byte_5563B13C9340);
+      for ( j = 0; j < len_str; j += 2 )
+      {
+        enter_string[j] = (enter_string[j] + enter_string[j + 1]) ^ byte_5563B13C9340[j];
+        enter_string[j + 1] = byte_5563B13C9340[j + 1] ^ (enter_string[j] - enter_string[j + 1]);
+      }
+      for ( k = 0; k < len_str; ++k )
+      {
+        if ( enter_string[k] != byte_5563B13C9180[k] )
+          exit(1);
+      }
+      exit(0);
+    }
+    wait((__WAIT_STATUS)&stat_loc);
+    if ( LODWORD(stat_loc.__uptr) )
+      puts(s);
+    else
+      puts(aGqk9lLwyvj);
+    exit(0);
+  }
+  what1(pipedes);
+  return v9 - __readfsqword(0x28u);
+}
+```
+Nếu như hàm key_scheduling được gọi trong này thì chắc chắn là nó phải có liên quan tới real flag rồi. Ở đây xuất hiện thêm 1 chuỗi encrypt khác nằm ở offset 180 : ```byte_5563B13C9180```, có thể kết luận rằng đây là real flag, vậy thì chỉ cần reverse đoạn này thì ta có thể tìm ra real flag rồi.
+
+Ngoài lề 1 chút, ngoài việc gặp khó khăn trong quá trình tìm hiểu và phát hiện về .init_array và .fini_array thì mình còn gặp 1 khó khăn nữa đó chính là việc debug đoạn real flag. Lí do là vì ở đây nó chuyển toàn bộ quá trình encrypt flag vô process con rồi mới xử lý, mà IDA hiện tại của mình lại debug process cha, nên là mình không thể nào mà debug thằng con để lấy key được (cái này mình sẽ tìm cách xử lý trong tương lai).
+
+Source code dưới đây là mình tham khảo từ 1 người khác, nên là cũng không hẳn là mình làm ra được( bù lại thì mình đã học được kiến thức mới về fini và init, nên cx ko quá tệ).
+
+```python
+s = "abcdefghijklmnopqrstuvwxyz0123456789"
+s_arr = [ord(c) for c in s]
+s_enc = [0xD9, 0xE4, 0x27, 0x07, 0xD0, 0xBE, 0x7B, 0xFD, 0xB8, 0x14, 0x1B, 0x32, 0xD1, 0x38, 0x0C, 0x44, 0x59, 0xE2, 0x66, 0x8C, 0x38, 0x24, 0xEA, 0x66, 0x8C, 0x65, 0xF8, 0x55, 0x60, 0x28, 0x50, 0x3A, 0x12, 0xA4, 0x78, 0x64]
+xor_box_1 = []
+for i in range(len(s_arr)): 
+    xor_box_1.append(s_arr[i] ^ s_enc[i])
+xor_box_2 = [0x35, 0x4B, 0xA0, 0x60, 0x08, 0x50, 0xA5, 0xF1, 0x33, 0x97, 0xB2, 0x13, 0xCB, 0x4C, 0x0D, 0xCF, 0xA3, 0x7C, 0x57, 0x53, 0xE2, 0xA9, 0x65, 0x4E, 0x0E, 0xC7, 0x7A, 0x0F, 0xFD, 0xB5, 0x9E, 0xB4, 0x33, 0xF9, 0x61, 0xD3]
+enc = [0xF7, 0x5F, 0xE7, 0xB0, 0x9A, 0xB4, 0xE0, 0xE7, 0x9E, 0x05, 0xFE, 0xD8, 0x35, 0x5C, 0x72, 0xE0, 0x86, 0xDE, 0x73, 0x9F, 0x9A, 0xF6, 0x0D, 0xDC, 0xC8, 0x4F, 0xC2, 0xA4, 0x7A, 0xB5, 0xE3, 0xCD, 0x60, 0x9D, 0x04, 0x1F]
+for i in range(0, len(enc), 2): 
+    enc[i+1] ^= xor_box_2[i+1] 
+    enc[i+1] = enc[i]-enc[i+1] 
+    enc[i+1] %= 0x100 
+    enc[i] ^= xor_box_2[i] 
+    enc[i] = enc[i]-enc[i+1] 
+    enc[i] %= 0x100
+for i in range(len(enc)): 
+    enc[i] ^= xor_box_1[i]
+print(b"antd3ctf{"+bytes(enc)+b"}")
+```
+Flag:
+```antd3ctf{getting_primes_with_pipes_is_awesome}```
+
+
 ## Reference:
 
 - https://www.apriorit.com/dev-blog/367-anti-reverse-engineering-protection-techniques-to-use-before-releasing-software
