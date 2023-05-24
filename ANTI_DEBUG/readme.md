@@ -289,7 +289,45 @@ Sau đoạn code này sẽ có 1 đoạn gọi tới message box. Dựa trên nh
 Kết quả:
 ![](https://github.com/sinkthemall/REVERSE_ENGINEERING_challenges/blob/main/img/result_chall2.png)
 
+### Chall 3
 
+Sang tới chall 3 thì mình hơi bất ngờ vì không phát hiện việc process có sử dụng anti debugger. Tuy nhiên thì ta sẽ xem thử xem trong chương trình có gì:
+```c
+__int64 __fastcall main(int a1, char **a2, char **a3)
+{
+  int i; // [rsp+8h] [rbp-8h]
+  int j; // [rsp+Ch] [rbp-4h]
+
+  pipe(pipedes);
+  __isoc99_scanf(&unk_5635DD957004, enter_string);
+  len_str = strlen(enter_string);
+  set_increasing_sequence(&byte_5635DD959240);
+  key_scheduling(&byte_5635DD959240, &byte_5635DD959100, (unsigned int)dword_5635DD959164);
+  rc4_producing_stream(&byte_5635DD959240, (unsigned int)len_str, byte_5635DD959340);
+  for ( i = 0; i < len_str; ++i )
+    enter_string[i] ^= byte_5635DD959340[i];
+  for ( j = 0; j < len_str; ++j )
+  {
+    if ( enter_string[j] != byte_5635DD9590C0[j] )
+      exit(1);
+  }
+  return 0LL;
+}
+```
+Dựa trên những gì mình tìm thấy trong hàm main, thì mình có thể suy ra rằng challenge lần này có liên quan tới rc4 ( 1 loại stream cipher ), các hàm trên đã được mình rename lại sao cho dễ hiểu nhất có thể. Mình sẽ giải thích sơ lược các hàm để có thể dẽ hình dung:
+- set_increasing_sequence: hàm này dùng để tạo chuỗi tăng dần từ 0 đến 255, sau đó lưu vào 1 mảng. Đây là hàm được sử dụng trong quá trình key scheduling của rc4.
+- key_scheduling: hàm này là 1 part chính trong thuật toán rc4, nói nôm na thì hàm này sử dụng để sắp xếp, scheduling lại key.
+- rc4_producing_stream: hàm tạo stream cipher, stream này sẽ được lưu trong mảng, độ dài phụ thuộc vào chuỗi mà ta nhập vào
+Nếu như flow của main chỉ có như vầy thì nếu ta tạo ra được rc4 stream rồi đem xor với chuỗi ```byte_5635DD9590C0``` thì ta sẽ tìm ra được chuỗi chính xác mà ta cần tìm. Nhận thấy cách giải quyết, mình hí hửng loay hoay để debug lấy keystream và xor với chuỗi encrypted, thì đây là kết quả:
+```python
+def xor(a,b):
+    return bytes([i^j for i,j in zip(a,b)])
+
+key = b'\xb8\x86Dc\xb5\xd8\x1c\x95\xd1~p^\xbcVc4(\x90\x15\xf8MR\x9d\x1e\xf5\x1f\xc8dR\x1bd\x0f$'
+enc = b'\xdb\xb6*\x04\xc7\xb9h\xe0\xbd>\x04o\xd38\x10kJ\xe5a\xa7$\r\xfcs\xaaq\xf8\x10\r}UnC'
+print(xor(key, enc))
+```
+![]()
 ## Reference:
 
 - https://www.apriorit.com/dev-blog/367-anti-reverse-engineering-protection-techniques-to-use-before-releasing-software
