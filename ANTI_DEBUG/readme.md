@@ -450,9 +450,136 @@ print(b"antd3ctf{"+bytes(enc)+b"}")
 Flag:
 ```antd3ctf{getting_primes_with_pipes_is_awesome}```
 
+### Chal 4 - Supervisor
+Lời đầu tiên: cảm ơn anh Mochi đã giao em 1 bài khó vcl để em làm, I hate you bro!
+Tiếp đến là mình sẽ nói về hướng đi cho bài này. Một số điều chúng ta sẽ để ý trong challenge này đó là:
+- Có 3 file tất cả: supervisor, crackme.enc và flag.enc
+- File supervisor, crackme.enc đều là ELF 64bit, tức là chúng là file có thể thực thi, trong khi thằng flag.enc thì không
+- Nếu điều tra kĩ thì ta sẽ thấy rằng crackme có chứa 1 số đoạn code bị lỗi không chạy được.
+
+OK. Vậy thì đầu tiên ta sẽ tìm hiểu đôi chút về supervisor. Tuy nhiên để không làm mất thời gian (vì thực sự mình mất rất nhiều thời gian để làm được bài này), nên mình sẽ chỉ sơ lược những ý chính trong file, ngoài ra các đoạn code khác thì bạn có thể tự debug và tìm hiểu ý nghĩa (file bị stripped, nên bạn hãy coi đó là 1 challenge để cải thiện kĩ năng):
+```c
+__int64 __fastcall main(int a1, char **a2, char **a3)
+{
+  signed int v4; // [rsp+1Ch] [rbp-4h]
+
+  sub_11A5();
+  v4 = fork();
+  if ( v4 )
+  {
+    if ( v4 <= 0 )
+      return 0xFFFFFFFFLL;
+    tracing_child(v4);
+  }
+  else
+  {
+    laucnh_crackme("./crackme.enc");
+  }
+  return 0LL;
+}
+```
+```c
+int __fastcall launch_crackme(const char *a1)
+{
+  __int64 v1; // rax
+
+  v1 = ptrace(PTRACE_TRACEME, 0LL, 0LL, 0LL);
+  if ( v1 >= 0 )
+    LODWORD(v1) = execl(a1, a1, 0LL);
+  return v1;
+}
+```
+Đây là đoạn main chính của supervisor, thì ta thấy rằng nó sẽ fork 1 process con, rồi với process con thì đầu tiên nó sẽ gọi ptrace ( ở đây ta có thể tạm hiểu là nó tự debug bản thân), rồi sau đó execl tới file crackme.enc => thằng process con ngăn chặn việc debug và gọi tới crackme, lúc này có thể coi process con thực chất là crackme.
+Về phía process cha, mình sẽ nói sơ qua 1 số nhận định mà mình tìm được:
+- Mình phát hiện trong code có chứa 1 số hàm ```ptrace(PTRACE_POKETEXT, ...)```, những đoạn này dùng để modify thằng process con tại 1 địa chỉ nào đó
+- Thằng cha đợi tới khi nhận được SIGINT từ con (cái này có thể là int3 từ thằng con) rồi somehow sử dụng ```ptrace(PTRACE_PEEKTEXT,...)``` để lấy RIP của thằng con, lấy data, ... 
+- Trong code có 2 section tương tự nhau, đều modify code của con, tuy nhiên mình cx ko hoàn toàn rõ là gì nên tạm thời bỏ qua
+- Flow của nó sẽ là: đợi sigint => sửa code => set rip => chạy thằng con tiếp => đợi sigint => sửa code => ...
+Đó là cơ bản về tracing_child của thằng cha. Và trong đầu mình có 1 số câu hỏi:
+- Làm sao để debug thằng con?
+- Dựa theo những điều trên thì thằng con bị sửa code, có cách nào để khôi phục lại crackme.enc ko?
+- Liệu những điều này có liên quan gì đến flag?
+
+Nếu như trước đây, ta hay sử dụng việc patch file, set register, ... để bypass các cơ chế anti debug hoặc các điều kiện thì bây giờ chúng ta không thể sử dụng technique đó nữa, lí do là vì:
+- Chúng ta không thể modify , patch, set register lên thằng crackme vì cơ bản là nó cũng bị encrypt, chúng ta hoàn toàn không có 1 thông tin cụ thể nào về flow cũng như cách thức nó hoạt động
+- Để debug được 1 file thì ta cần phải attach cái debugger. Việc attach vô supervisor là vô nghĩa vì crackme mới là thằng chạy thực sự, mà chúng ta lại không thể attach được ( crackme được spawn = việc fork process con và chạy execl), Ngoài ra, nó còn bồi thêm 1 cú nữa = ptrace chính cái process con đó, đảm bảo không có debugger nào khác có thể debug được process đó.
+Và thực tế là, theo mình tìm hiểu được thì đây là 1 cái technique chống việc debug tên là nanomites (gg để rõ hơn). Tuy nhiên thì không hẳn là không có cách. Sau 1 thời gian mày mò tìm hiểu thì mình đã tìm ra cách để debug được. Nó liên quan tới 1 kĩ thuật hooking các hàm có trong thư viện, mình sẽ để (link)[https://tbrindus.ca/correct-ld-preload-hooking-libc/] để bạn có thể tìm hiểu thêm. Nó tận dụng được việc các shared library được load trước, cho phép overwrite lại 1 hàm nào đó ( ở đây thì ta sẽ overwrite theo hướng có lợi cho việc debug thôi).
+
+Để debug được thì ta sẽ bám sát vào việc nó modify dòng code ở đâu, và set RIP ở đâu, điều này được thực hiện thông qua hàm ptrace ( đây là cách làm của mình, overwrite lại hàm ptrace - không hẳn là viết lại mà chỉ ghi ra các tham số được pass vào trong ptrace thôi và mình sẽ viết sao cho ptrace vẫn chạy như bth, ở đây ta sẽ quan tâm 2 thứ : addr và data)
+
+Dưới đây là đoạn code mình overwrite ptrace:
+```c
+#include <stdio.h>
+#include <sys/ptrace.h>
+#include <stdarg.h>
+#include <unistd.h>
+#include <dlfcn.h>
+
+long int ptrace(enum __ptrace_request __request, ...){
+    pid_t caller = getpid();
+    va_list list;
+    va_start(list, __request);
+    pid_t pid = va_arg(list, pid_t);
+    void* addr = va_arg(list, void*);
+    void* data = va_arg(list, void*);
+    long int (*orig_ptrace)(enum __ptrace_request __request, pid_t pid, void *addr, void *data);
+    orig_ptrace = dlsym(RTLD_NEXT, "ptrace");
+    long int result = orig_ptrace(__request, pid, addr, data);
+    if (__request == PTRACE_SETREGS){
+        unsigned long rip = *((unsigned long*)data + 16) - 0x555555554000;
+        //printf("SETREGS: rip: 0x%lx\n", rip);
+        printf("0x%lx\n", rip);
+    } else if (__request == PTRACE_POKETEXT){
+       // printf("POKETEXT: (addr , data) = (0x%lx , 0x%lx)\n", (unsigned long)addr - 0x555555554000, (unsigned long)data);
+        printf("(0x%lx , 0x%lx)\n", (unsigned long) addr -  0x555555554000, (unsigned long) data);
+    }
+    return result;
+}
+```
+Compile nó lại với lệnh ```gcc -shared -fPIC -ldl -o ptrace_hook.so ptrace_hook.c``` . Nếu như bạn chưa biết thì lệnh này sẽ compile file ptrace_hook.c thành 1 thư viện, và ta sẽ đặt ```LD_PRELOAD=/path/to/ptrace_hook.so``` để có thể overwrite được ptrace. Hoặc có thể sử dụng pwntools để làm việc này, mình thì ưa thích pwntools vì nó support rất nhiều thứ, đông thời nên tắt aslr để không phải bận tâm gì nhiều tới random address (file run.py là file mà mình dùng để replace ptrace).
+
+Sau khi chạy run.py thì console nó xuất ra những dòng này:
+```
+d4rkn19ht@LAPTOP-MGCICI75:/mnt/d/tai_lieu_h0c_tren_lop/thuchanh_ltht/btvn_day2/btvn_day2/Day 2/chal4/backup$ python3 run.py
+[+] Starting local process './supervisor': pid 1047
+[!] ASLR is disabled!
+[*] Switching to interactive mode
+(0x1800 , 0x45c748fffff84be8)
+(0x1871 , 0x89e0458b48000000)
+(0x18e5 , 0x1ebfffff7b5e8c7)
+(0x1838 , 0x8948d8458b48c289)
+(0x18a8 , 0x775fff883fffffd)
+0x17f9
+Hello there!
+(0x16db , 0xe8c78948000009ab)
+(0x174b , 0x8348008b48d8458b)
+(0x17bd , 0x1ebfffff93de8c7)
+(0x1712 , 0xe8c7894800000000)
+(0x1781 , 0xf975e8c78948f845)
+0x16d4
+Error! https://www.youtube.com/watch?v=Khk6SEQ-K-k
+0xCCya!
+: No such process
+[*] Got EOF while reading in interactive
+$
+```
+Yes, chúng ta đã phát hiện ra những đoạn code bị modify. những dòng có 2 số thì bên trái là địa chỉ, bên phải là data bị modify, còn với dòng có 1 số, thì đó là địa chỉ RIP được set. Từ thông tin trên ta có thể patch lại crackme những đoạn bị encrypt. Với việc làm sao để xử lí set RIP, thì mình tìm thẳng tới địa chỉ xuất hiện int3 gần nhất, và patch từ chỗ đó tới đoạn địa chỉ RIP = các opcode "\x90", những opcode này tương ứng lệnh nop.
+
+============> Speedrun time
+Vì mình quá lười để giải thích những phần còn lại, nên mình sẽ tóm gọn những phần mình đã làm.
+
+Trên thực tế, đoạn trên không phải là những chỗ duy nhất mà code bị modify, thực ra là còn nhiều nữa, tuy nhiên do process chưa chạy đến đoạn đó mà đã thoát ra nên mới không thấy những đoạn khác bị sửa. Và ngoài ra, thằng cha không nhũng decrypt thằng con, mà nó còn encrypt lại (idk men, chắc để an toàn thôi). Vậy nên cần phải lưu ý xem là cái nào là cái decrypt, cái nào là cái encrypt, nếu mà patch code lung tung( tức là patch toàn bộ ý), rất dễ khiến code bị sai. Sau khi xong thì mình phát hiện là process nó mở 1 file tên là ```secret_key```, nên mình tạo thêm file đó. Từ những điều trên, mình lặp lại quá trình: patch code => debug => phát hiện những đoạn code bị encrypt => lại sửa tiếp... Mình có up các đoạn code như: patch_crackme.py dùng để vá lại file, run.py dùng để chạy thằng supervisor nma overwrite ptrace, ptrace_hook.so là thư viện mình đã compile sẵn, key_recover.py dùng để recover lại key ban đầu của thằng secret_key, ...có thể sử dụng chúng để tham khảo thêm về cách làm của mình.
+
+Sau khi ta chỉnh sửa xong và chạy thì sẽ xuất hiện 1 file png, đây là file flag cuối cùng.
+Flag:```justCTF{Cr4ckm3s_are_0xCCiting}```
+
+Sau đợt này thì mình học được khá nhiều technique hay: hook libc, fini_array, init_array, bypass anti debug, ... nma cái giá phải trả là đau lưng, mệt mỏi, thâm mắt (vì mình thức khá là khuya để làm) 🥲
+
+Life of hacker is never that easy.
 
 ## Reference:
 
 - https://www.apriorit.com/dev-blog/367-anti-reverse-engineering-protection-techniques-to-use-before-releasing-software
 - https://linuxsecurity.com/features/anti-debugging-for-noobs-part-1
 - https://www.codeproject.com/Articles/621236/Nanomite-and-Debug-Blocker-for-Linux-Applications
+- https://tbrindus.ca/correct-ld-preload-hooking-libc/
